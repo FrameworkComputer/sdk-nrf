@@ -15,6 +15,7 @@
 / {
 	chosen {
 		zephyr,boot-mode = &boot_mode0;
+		zephyr,uart-mcumgr = &mcumgr_cdc_acm;
 		/delete-property/ zephyr,console;
 	};
 
@@ -69,6 +70,16 @@
 &vregmain {
 	status = "okay";
 	regulator-initial-mode = <NRF5X_REG_MODE_LDO>;
+};
+
+/* MCUmgr (SMP) over USB CDC ACM: device info and a reset into MCUboot serial
+ * recovery, for firmware updates with mcumgr or aster.
+ */
+&zephyr_udc0 {
+	mcumgr_cdc_acm: mcumgr_cdc_acm {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "Daisy MCUmgr";
+	};
 };
 
 /* Lets the application reboot into MCUboot serial recovery. */
