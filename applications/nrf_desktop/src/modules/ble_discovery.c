@@ -105,8 +105,29 @@ static void hids_discovery_completed(struct bt_gatt_dm *dm, void *context)
 	}
 }
 
+static bool dev_descr_skippable(void)
+{
+	return IS_ENABLED(CONFIG_DESKTOP_BLE_DISCOVERY_DEV_DESCR_OPTIONAL) &&
+	       ((state == DISCOVERY_STATE_DEV_DESCR_LLPM) ||
+		(state == DISCOVERY_STATE_DEV_DESCR_HWID));
+}
+
+static void skip_dev_descr(void)
+{
+	LOG_INF("No device description - assuming no LLPM support and zero HW ID");
+	peer_llpm_support = false;
+	memset(peer_hwid, 0, sizeof(peer_hwid));
+	state = DISCOVERY_STATE_DIS - 1;
+	k_work_submit(&next_discovery_step);
+}
+
 static void service_not_found(struct bt_conn *conn, void *context)
 {
+	if (dev_descr_skippable()) {
+		skip_dev_descr();
+		return;
+	}
+
 	LOG_ERR("Service not found");
 	peer_disconnect(conn);
 }
@@ -222,11 +243,15 @@ static void discovery_completed(struct bt_gatt_dm *dm, void *context)
 	attr = bt_gatt_dm_char_by_uuid(dm, uuid);
 
 	if (!attr) {
-		LOG_ERR("Characteristic not found - disconnecting");
 		err = bt_gatt_dm_data_release(dm);
 		if (err) {
 			goto error;
 		}
+		if (dev_descr_skippable()) {
+			skip_dev_descr();
+			return;
+		}
+		LOG_ERR("Characteristic not found - disconnecting");
 		peer_disconnect(bt_gatt_dm_conn_get(dm));
 		return;
 	}

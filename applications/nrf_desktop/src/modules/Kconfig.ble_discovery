@@ -14,6 +14,14 @@ menuconfig DESKTOP_BLE_DISCOVERY_ENABLE
 
 if DESKTOP_BLE_DISCOVERY_ENABLE
 
+config DESKTOP_BLE_DISCOVERY_DEV_DESCR_OPTIONAL
+	bool "Accept peers without the device description service"
+	help
+	  By default, the module disconnects a peer that does not provide the
+	  nRF Desktop device description (custom GATT Service). Enable this
+	  option to accept such a peer: it is treated as not supporting LLPM
+	  and its hardware ID is all zeros.
+
 module = DESKTOP_BLE_DISCOVERY
 module-str = BLE discovery
 source "subsys/logging/Kconfig.template.log_config"
