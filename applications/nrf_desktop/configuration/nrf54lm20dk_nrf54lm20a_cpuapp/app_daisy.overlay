@@ -36,12 +36,29 @@
 		/delete-property/ mcuboot-led0;
 	};
 
+	/* HID passthrough of the Daisy keyboard's HID Services, in the order of
+	 * hid_passthrough_def.h.
+	 *
+	 * Keyboard. protocol-code = "keyboard" makes it a boot keyboard
+	 * interface, which BIOS hosts need, and which Linux needs to arm USB
+	 * remote wakeup (usbhid only enables it for a boot keyboard).
+	 */
 	hid_dev_0: hid_dev_0 {
 		compatible = "zephyr,hid-device";
 		label = "HID0";
 		protocol-code = "keyboard";
+		in-polling-period-us = <1000>;
+		in-report-size = <32>;
+	};
+
+	/* Touchpad (PTP frames: report 4, 29 bytes and the ID). 125 us is
+	 * bInterval 1 at high speed. A full speed host polls every 1 ms.
+	 */
+	hid_dev_1: hid_dev_1 {
+		compatible = "zephyr,hid-device";
+		label = "HID1";
 		in-polling-period-us = <125>;
-		in-report-size = <64>;
+		in-report-size = <32>;
 	};
 };
 
