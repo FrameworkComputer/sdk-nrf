@@ -49,7 +49,11 @@ config DESKTOP_HID_PASSTHROUGH_QUEUE_SIZE
 	default 16
 
 config BT_HOGP_REPORTS_MAX
-	default 16
+	default 32
+	help
+	  The pool of HID reports is shared by all HID Services of all
+	  peripherals. Make it fit the reports of every HID Service of
+	  CONFIG_DESKTOP_HID_DONGLE_CONN_COUNT peripherals.
 
 module = DESKTOP_HID_PASSTHROUGH
 module-str = HID passthrough

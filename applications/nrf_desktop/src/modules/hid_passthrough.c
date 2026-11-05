@@ -69,6 +69,8 @@ struct service {
 	uint8_t map_win[TLC_PATTERN_LEN];
 	uint8_t map_win_len;
 	uint8_t map_match_bm;
+	/* Offset of the next report map chunk to read. */
+	size_t map_offset;
 	struct k_work_delayable map_read_retry;
 	/* Feature reports still to be written to the peripheral (bit per entry
 	 * of the interface's features).
@@ -798,23 +800,31 @@ static void map_match(struct service *svc, uint8_t byte)
 	}
 }
 
-static void map_read_start(struct service *svc);
+static void map_read_next(struct service *svc);
 
+/* Called for every chunk of the report map. The next chunk is read from the
+ * callback, until a read returns no data.
+ */
 static void hogp_map_cb(struct bt_hogp *hogp, uint8_t err, const uint8_t *data, size_t size,
 			size_t offset)
 {
 	struct service *svc = svc_get(hogp);
 
-	if (err) {
+	if (err == BT_ATT_ERR_INVALID_OFFSET) {
+		/* Read past the end: the map was a multiple of the chunk size. */
+		data = NULL;
+	} else if (err) {
 		LOG_ERR("Service %zu: report map read failed (err:%" PRIu8 ")",
 			svc_idx(svc), err);
 		return;
 	}
 
-	if (data) {
+	if (data && (size > 0)) {
 		for (size_t i = 0; i < size; i++) {
 			map_match(svc, data[i]);
 		}
+		svc->map_offset = offset + size;
+		map_read_next(svc);
 		return;
 	}
 
@@ -822,15 +832,14 @@ static void hogp_map_cb(struct bt_hogp *hogp, uint8_t err, const uint8_t *data, 
 	service_matched(svc);
 }
 
-static void map_read_start(struct service *svc)
+static void map_read_next(struct service *svc)
 {
-	svc->map_win_len = 0;
-	svc->map_match_bm = 0;
+	int err = bt_hogp_map_read(&svc->hogp, hogp_map_cb, svc->map_offset, K_NO_WAIT);
 
-	int err = bt_hogp_map_read(&svc->hogp, hogp_map_cb, 0, K_NO_WAIT);
-
-	if (err == -EBUSY) {
-		/* Another request of the peer is in progress. */
+	if ((err == -EBUSY) || (err == -ENOMEM)) {
+		/* Another request of the peer is in progress, or the ATT layer is
+		 * out of buffers while the peer's other services are set up.
+		 */
 		k_work_reschedule(&svc->map_read_retry, K_MSEC(MAP_READ_RETRY_MS));
 	} else if (err) {
 		LOG_ERR("Service %zu: cannot read report map (err:%d)", svc_idx(svc), err);
@@ -843,7 +852,7 @@ static void map_read_retry_fn(struct k_work *work)
 	struct service *svc = CONTAINER_OF(dwork, struct service, map_read_retry);
 
 	if (svc_is_connected(svc)) {
-		map_read_start(svc);
+		map_read_next(svc);
 	}
 }
 
@@ -852,7 +861,11 @@ static void hogp_ready(struct bt_hogp *hogp)
 	struct service *svc = svc_get(hogp);
 
 	LOG_INF("Service %zu ready", svc_idx(svc));
-	map_read_start(svc);
+
+	svc->map_win_len = 0;
+	svc->map_match_bm = 0;
+	svc->map_offset = 0;
+	map_read_next(svc);
 }
 
 static void hogp_prep_error(struct bt_hogp *hogp, int err)
@@ -921,8 +934,11 @@ static void release_service(struct service *svc)
 				size_t size = bt_hogp_rep_size(rep) + 1;
 				uint8_t data[REPORT_SIZE_MAX] = {0};
 
+				/* The size of a report is known once it was
+				 * received. One never received has nothing down.
+				 */
 				if ((bt_hogp_rep_type(rep) != BT_HIDS_REPORT_TYPE_INPUT) ||
-				    (size > sizeof(data))) {
+				    (size == 1) || (size > sizeof(data))) {
 					continue;
 				}
 
