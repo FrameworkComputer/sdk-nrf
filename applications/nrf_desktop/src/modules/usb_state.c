@@ -29,6 +29,7 @@ LOG_MODULE_REGISTER(MODULE, CONFIG_DESKTOP_USB_STATE_LOG_LEVEL);
 
 #include "hid_report_desc.h"
 #include "config_channel_transport.h"
+#include "hid_passthrough.h"
 
 #include "hid_event.h"
 #include "usb_event.h"
@@ -62,15 +63,24 @@ enum {
 	USB_HID_BUF_BOOT_REPORT_FORMAT	= BIT(2),
 };
 
-BUILD_ASSERT(REPORT_BUFFER_SIZE_INPUT_REPORT <= UINT8_MAX);
+#if CONFIG_DESKTOP_HID_PASSTHROUGH_ENABLE
+/* Reports of the peripherals are forwarded as they are. The Kconfig option includes the report
+ * ID.
+ */
+#define USB_HID_INPUT_REPORT_SIZE_MAX	(CONFIG_DESKTOP_HID_PASSTHROUGH_REPORT_SIZE_MAX - REPORT_ID_SIZE)
+#else
+#define USB_HID_INPUT_REPORT_SIZE_MAX	REPORT_BUFFER_SIZE_INPUT_REPORT
+#endif
+
+BUILD_ASSERT(USB_HID_INPUT_REPORT_SIZE_MAX <= UINT8_MAX);
 
 #ifdef CONFIG_DESKTOP_USB_STACK_NEXT
 #define _USB_HID_BUF_ALIGN (UDC_BUF_ALIGN)
-#define _USB_HID_BUF_SIZE  (ROUND_UP(REPORT_ID_SIZE + REPORT_BUFFER_SIZE_INPUT_REPORT, \
+#define _USB_HID_BUF_SIZE  (ROUND_UP(REPORT_ID_SIZE + USB_HID_INPUT_REPORT_SIZE_MAX, \
 				     UDC_BUF_GRANULARITY))
 #else
 #define _USB_HID_BUF_ALIGN (sizeof(void *))
-#define _USB_HID_BUF_SIZE  (ROUND_UP(REPORT_ID_SIZE + REPORT_BUFFER_SIZE_INPUT_REPORT, \
+#define _USB_HID_BUF_SIZE  (ROUND_UP(REPORT_ID_SIZE + USB_HID_INPUT_REPORT_SIZE_MAX, \
 				     sizeof(void *)))
 #endif /* CONFIG_DESKTOP_USB_STACK_NEXT */
 
@@ -515,6 +525,13 @@ static struct usb_hid_device *subscriber_to_usb_hid(const void *subscriber)
 	}
 
 	return NULL;
+}
+
+int usb_state_hid_subscriber_idx(const void *subscriber)
+{
+	struct usb_hid_device *usb_hid = subscriber_to_usb_hid(subscriber);
+
+	return usb_hid ? (usb_hid - &usb_hid_device[0]) : -ENOENT;
 }
 
 static bool handle_hid_report_event(struct hid_report_event *event)
@@ -1102,6 +1119,17 @@ static int get_report_next(const struct device *dev, const uint8_t type, const u
 	/* Omit the first byte - HID report ID. */
 	buf[0] = id;
 
+	if (IS_ENABLED(CONFIG_DESKTOP_HID_PASSTHROUGH_ENABLE)) {
+		if (type != REPORT_TYPE_FEATURE) {
+			return -ENOTSUP;
+		}
+
+		int ret = hid_passthrough_get_feature(dev_to_usb_hid(dev) - &usb_hid_device[0],
+						      id, buf + 1, len - 1);
+
+		return (ret < 0) ? ret : (ret + 1);
+	}
+
 	int err = get_report(dev, type, id, buf + 1, len - 1);
 
 	return err ? err : len;
@@ -1110,6 +1138,22 @@ static int get_report_next(const struct device *dev, const uint8_t type, const u
 static int set_report_next(const struct device *dev, const uint8_t type, const uint8_t id,
 			   const uint16_t len, const uint8_t *const buf)
 {
+	if (IS_ENABLED(CONFIG_DESKTOP_HID_PASSTHROUGH_ENABLE)) {
+		size_t idx = dev_to_usb_hid(dev) - &usb_hid_device[0];
+
+		/* Omit the first byte - HID report ID. */
+		switch (type) {
+		case REPORT_TYPE_FEATURE:
+			return hid_passthrough_set_feature(idx, id, buf + 1, len - 1);
+
+		case REPORT_TYPE_OUTPUT:
+			return hid_passthrough_set_output(idx, id, buf + 1, len - 1);
+
+		default:
+			return -ENOTSUP;
+		}
+	}
+
 	/* Omit the first byte - HID report ID. */
 	return set_report(dev, type, id, buf + 1, len - 1);
 }
@@ -1118,14 +1162,16 @@ static void set_idle_next(const struct device *dev, const uint8_t id, const uint
 {
 	struct usb_hid_device *usb_hid = dev_to_usb_hid(dev);
 
-	usb_hid->idle_duration[id] = duration;
+	if (id < ARRAY_SIZE(usb_hid->idle_duration)) {
+		usb_hid->idle_duration[id] = duration;
+	}
 }
 
 static uint32_t get_idle_next(const struct device *dev, const uint8_t id)
 {
 	struct usb_hid_device *usb_hid = dev_to_usb_hid(dev);
 
-	return usb_hid->idle_duration[id];
+	return (id < ARRAY_SIZE(usb_hid->idle_duration)) ? usb_hid->idle_duration[id] : 0;
 }
 
 static void report_sent_cb_next(const struct device *dev, const uint8_t *report)
@@ -1160,8 +1206,18 @@ static int usb_init_next_hid_device_init(struct usb_hid_device *usb_hid_dev, uin
 
 	usb_hid_dev->report_bm = report_bm;
 
-	int err = hid_device_register(usb_hid_dev->dev, hid_report_desc, hid_report_desc_size,
-				      &hid_ops);
+	const uint8_t *desc = hid_report_desc;
+	size_t desc_size = hid_report_desc_size;
+
+	if (IS_ENABLED(CONFIG_DESKTOP_HID_PASSTHROUGH_ENABLE)) {
+		desc = hid_passthrough_report_map(usb_hid_dev - &usb_hid_device[0], &desc_size);
+		if (!desc) {
+			LOG_ERR("No HID passthrough report map for %p", (void *)usb_hid_dev->dev);
+			return -ENOENT;
+		}
+	}
+
+	int err = hid_device_register(usb_hid_dev->dev, desc, desc_size, &hid_ops);
 
 	if (err) {
 		LOG_ERR("hid_device_register failed for %p (err: %d)",

@@ -29,6 +29,7 @@ target_sources_ifdef(CONFIG_DESKTOP_FAST_PAIR app PRIVATE fast_pair.c)
 target_sources_ifdef(CONFIG_DESKTOP_SWIFT_PAIR app PRIVATE swift_pair.c)
 
 target_sources_ifdef(CONFIG_DESKTOP_HID_FORWARD_ENABLE app PRIVATE hid_forward.c)
+target_sources_ifdef(CONFIG_DESKTOP_HID_PASSTHROUGH_ENABLE app PRIVATE hid_passthrough.c)
 
 target_sources_ifdef(CONFIG_DESKTOP_HID_STATE_ENABLE app PRIVATE hid_state.c)
 

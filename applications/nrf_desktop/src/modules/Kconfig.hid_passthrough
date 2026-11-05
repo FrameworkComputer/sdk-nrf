@@ -1,0 +1,60 @@
+#
+# Copyright (c) 2026 Framework Computer Inc
+#
+# SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+#
+
+menu "HID passthrough"
+
+config DESKTOP_HID_PASSTHROUGH_ENABLE
+	bool "Enable HID passthrough"
+	depends on DESKTOP_ROLE_HID_DONGLE
+	depends on DESKTOP_BT_CENTRAL
+	depends on DESKTOP_USB_STACK_NEXT
+	depends on !DESKTOP_HID_FORWARD_ENABLE
+	select BT_HOGP
+	select DESKTOP_BLE_DISCOVERY_HIDS_ALL
+	help
+	  Forward the HID Services of the peripherals connected over Bluetooth
+	  LE to USB as they are, instead of translating their reports to the
+	  nRF Desktop report map (HID forward module). Every USB HID instance
+	  exposes the report map of one kind of HID Service, for example a
+	  keyboard or a touchpad. The report maps and the services they are
+	  matched with are defined in the hid_passthrough_def.h file of the
+	  board configuration.
+
+	  Input reports go to the USB HID instance of their service. Feature
+	  reports are answered from a local cache, refreshed from the
+	  peripherals, and host writes are forwarded to every peripheral and
+	  replayed when one reconnects. Output reports go to every peripheral
+	  that has them.
+
+if DESKTOP_HID_PASSTHROUGH_ENABLE
+
+config DESKTOP_HID_PASSTHROUGH_HIDS_PER_PEER
+	int "Maximum number of HID Services per peripheral"
+	range 1 8
+	default 3
+
+config DESKTOP_HID_PASSTHROUGH_REPORT_SIZE_MAX
+	int "Maximum size of a forwarded input report"
+	range 2 64
+	default 32
+	help
+	  Size includes the report ID. Bigger reports are dropped.
+
+config DESKTOP_HID_PASSTHROUGH_QUEUE_SIZE
+	int "Input reports queued per USB HID instance"
+	range 2 64
+	default 16
+
+config BT_HOGP_REPORTS_MAX
+	default 16
+
+module = DESKTOP_HID_PASSTHROUGH
+module-str = HID passthrough
+source "subsys/logging/Kconfig.template.log_config"
+
+endif
+
+endmenu
