@@ -67,6 +67,11 @@
 	status = "disabled";
 };
 
+/* watchdog0, fed by the watchdog module from the system workqueue. */
+&wdt31 {
+	status = "okay";
+};
+
 &vregmain {
 	status = "okay";
 	regulator-initial-mode = <NRF5X_REG_MODE_LDO>;
