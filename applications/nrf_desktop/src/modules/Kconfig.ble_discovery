@@ -22,6 +22,15 @@ config DESKTOP_BLE_DISCOVERY_DEV_DESCR_OPTIONAL
 	  option to accept such a peer: it is treated as not supporting LLPM
 	  and its hardware ID is all zeros.
 
+config DESKTOP_BLE_DISCOVERY_HIDS_ALL
+	bool "Discover every HID Service of a peer"
+	help
+	  By default, the module discovers only the first HID Service of a
+	  peer. Enable this option to discover all of them, for example for a
+	  keyboard with a touchpad that has a HID Service for each. Every
+	  instance but the last is reported with ble_discovery_hids_event, the
+	  last one with ble_discovery_complete_event.
+
 module = DESKTOP_BLE_DISCOVERY
 module-str = BLE discovery
 source "subsys/logging/Kconfig.template.log_config"

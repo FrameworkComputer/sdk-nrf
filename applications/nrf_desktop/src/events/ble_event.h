@@ -45,8 +45,25 @@ struct ble_discovery_complete_event {
 	uint8_t hwid[HWID_LEN];
 	bool peer_llpm_support;
 	enum peer_type peer_type;
+	/* Index of the reported HID Service instance (0 for the first one). */
+	uint8_t hids_idx;
 };
 APP_EVENT_TYPE_DECLARE(ble_discovery_complete_event);
+
+/** @brief BLE discovery HIDS event.
+ *
+ * Submitted when CONFIG_DESKTOP_BLE_DISCOVERY_HIDS_ALL is enabled and the peer
+ * has more than one HID Service. Every HID Service instance except the last
+ * one is reported with this event. The last one is reported with the
+ * @ref ble_discovery_complete_event, which also ends the discovery.
+ */
+struct ble_discovery_hids_event {
+	struct app_event_header header;
+
+	struct bt_gatt_dm *dm;
+	uint8_t hids_idx;
+};
+APP_EVENT_TYPE_DECLARE(ble_discovery_hids_event);
 
 #if CONFIG_DESKTOP_BLE_QOS_ENABLE
 /** @brief BLE QoS event. */

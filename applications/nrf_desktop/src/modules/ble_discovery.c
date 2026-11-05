@@ -36,8 +36,15 @@ static enum discovery_state state;
 
 static uint16_t peer_vid;
 static uint16_t peer_pid;
+static enum peer_type peer_type;
 static bool peer_llpm_support;
 static uint8_t peer_hwid[HWID_LEN];
+
+/* HID Service instances of the peer: how many there are and which one is being
+ * discovered. There is only one unless CONFIG_DESKTOP_BLE_DISCOVERY_HIDS_ALL.
+ */
+static uint8_t hids_count;
+static uint8_t hids_idx;
 
 static struct bt_conn *discovering_peer_conn;
 static const struct bt_uuid * const pnp_uuid = BT_UUID_DIS_PNP_ID;
@@ -69,9 +76,22 @@ static void hids_discovery_completed(struct bt_gatt_dm *dm, void *context)
 	__ASSERT_NO_MSG(dm != NULL);
 	__ASSERT_NO_MSG(bt_gatt_dm_conn_get(dm) == discovering_peer_conn);
 	BUILD_ASSERT(PEER_TYPE_COUNT <= __CHAR_BIT__, "");
-	LOG_INF("HIDS discovery procedure succeeded");
+	LOG_INF("HIDS discovery procedure succeeded (%" PRIu8 "/%" PRIu8 ")",
+		hids_idx + 1, hids_count);
 
 	bt_gatt_dm_data_print(dm);
+
+	/* This module is the last one to process the events and release the
+	 * discovery data.
+	 */
+	if ((hids_idx + 1) < hids_count) {
+		struct ble_discovery_hids_event *event = new_ble_discovery_hids_event();
+
+		event->dm = dm;
+		event->hids_idx = hids_idx;
+		APP_EVENT_SUBMIT(event);
+		return;
+	}
 
 	struct ble_discovery_complete_event *event =
 		new_ble_discovery_complete_event();
@@ -81,28 +101,10 @@ static void hids_discovery_completed(struct bt_gatt_dm *dm, void *context)
 	event->peer_llpm_support = peer_llpm_support;
 	__ASSERT_NO_MSG(sizeof(peer_hwid) == sizeof(event->hwid));
 	memcpy(event->hwid, peer_hwid, sizeof(peer_hwid));
+	event->peer_type = peer_type;
+	event->hids_idx = hids_idx;
 
-	for (size_t i = 0; i < ARRAY_SIZE(bt_peripherals); i++) {
-		if (bt_peripherals[i].pid == peer_pid) {
-			event->peer_type = bt_peripherals[i].peer_type;
-			APP_EVENT_SUBMIT(event);
-			/* This module is the last one to process this event
-			 * and release the discovery data.
-			 */
-			return;
-		}
-	}
-
-	/* Nothing was found. */
-	LOG_ERR("Unrecognized peer");
-	peer_disconnect(bt_gatt_dm_conn_get(dm));
-	app_event_manager_free(event);
-	int err = bt_gatt_dm_data_release(dm);
-
-	if (err) {
-		LOG_ERR("Discovery data release failed (err:%d)", err);
-		module_set_state(MODULE_STATE_ERROR);
-	}
+	APP_EVENT_SUBMIT(event);
 }
 
 static bool dev_descr_skippable(void)
@@ -316,7 +318,66 @@ static bool verify_peer(void)
 		return false;
 	}
 
-	return true;
+	for (size_t i = 0; i < ARRAY_SIZE(bt_peripherals); i++) {
+		if (bt_peripherals[i].pid == peer_pid) {
+			peer_type = bt_peripherals[i].peer_type;
+			return true;
+		}
+	}
+
+	LOG_ERR("Unrecognized peer");
+	return false;
+}
+
+static uint8_t count_hids_cb(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+			     struct bt_gatt_discover_params *params)
+{
+	if (attr) {
+		if (hids_count < UINT8_MAX) {
+			hids_count++;
+		}
+		return BT_GATT_ITER_CONTINUE;
+	}
+
+	LOG_INF("Peer has %" PRIu8 " HID Service(s)", hids_count);
+
+	if (hids_count == 0) {
+		LOG_ERR("Service not found");
+		peer_disconnect(conn);
+	} else {
+		start_discovery(conn, BT_UUID_HIDS, true);
+	}
+
+	return BT_GATT_ITER_STOP;
+}
+
+static void start_hids_discovery(struct bt_conn *conn)
+{
+	if (!IS_ENABLED(CONFIG_DESKTOP_BLE_DISCOVERY_HIDS_ALL)) {
+		hids_count = 1;
+		start_discovery(conn, BT_UUID_HIDS, true);
+		return;
+	}
+
+	/* Count the HID Services first. The last one is reported with the
+	 * discovery complete event, the ones before with HIDS events.
+	 */
+	static struct bt_gatt_discover_params params = {
+		.func = count_hids_cb,
+		.start_handle = BT_ATT_FIRST_ATTRIBUTE_HANDLE,
+		.end_handle = BT_ATT_LAST_ATTRIBUTE_HANDLE,
+		.type = BT_GATT_DISCOVER_PRIMARY,
+	};
+
+	params.uuid = BT_UUID_HIDS;
+	hids_count = 0;
+
+	int err = bt_gatt_discover(conn, &params);
+
+	if (err) {
+		LOG_ERR("Cannot count HID Services (err:%d)", err);
+		peer_disconnect(conn);
+	}
 }
 
 static void next_discovery_step_fn(struct k_work *w)
@@ -340,7 +401,7 @@ static void next_discovery_step_fn(struct k_work *w)
 		if (!verify_peer()) {
 			peer_disconnect(discovering_peer_conn);
 		} else {
-			start_discovery(discovering_peer_conn, BT_UUID_HIDS, true);
+			start_hids_discovery(discovering_peer_conn);
 		}
 		break;
 
@@ -368,6 +429,8 @@ static bool app_event_handler(const struct app_event_header *aeh)
 		case PEER_STATE_CONNECTED:
 			discovering_peer_conn = event->id;
 			bt_conn_ref(discovering_peer_conn);
+			hids_count = 0;
+			hids_idx = 0;
 			k_work_submit(&next_discovery_step);
 			break;
 
@@ -394,6 +457,30 @@ static bool app_event_handler(const struct app_event_header *aeh)
 		return false;
 	}
 
+	if (IS_ENABLED(CONFIG_DESKTOP_BLE_DISCOVERY_HIDS_ALL) &&
+	    is_ble_discovery_hids_event(aeh)) {
+		const struct ble_discovery_hids_event *event =
+			cast_ble_discovery_hids_event(aeh);
+
+		int err = bt_gatt_dm_data_release(event->dm);
+
+		if (err) {
+			LOG_ERR("Discovery data release failed (err:%d)", err);
+			module_set_state(MODULE_STATE_ERROR);
+			return false;
+		}
+
+		/* Discover the next HID Service instance. */
+		hids_idx++;
+		err = bt_gatt_dm_continue(event->dm, NULL);
+		if (err) {
+			LOG_ERR("Cannot continue discovery (err:%d)", err);
+			peer_disconnect(discovering_peer_conn);
+		}
+
+		return false;
+	}
+
 	if (is_module_state_event(aeh)) {
 		const struct module_state_event *event =
 			cast_module_state_event(aeh);
@@ -413,4 +500,7 @@ static bool app_event_handler(const struct app_event_header *aeh)
 APP_EVENT_LISTENER(MODULE, app_event_handler);
 APP_EVENT_SUBSCRIBE(MODULE, ble_peer_event);
 APP_EVENT_SUBSCRIBE_FINAL(MODULE, ble_discovery_complete_event);
+#if CONFIG_DESKTOP_BLE_DISCOVERY_HIDS_ALL
+APP_EVENT_SUBSCRIBE_FINAL(MODULE, ble_discovery_hids_event);
+#endif
 APP_EVENT_SUBSCRIBE(MODULE, module_state_event);
