@@ -1,0 +1,66 @@
+/*
+ * Copyright (c) 2026 Framework Computer Inc
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/* Daisy dongle: the Framework Wireless Touchpad Keyboard USB-A dongle. It is
+ * an nRF54LM20A built on the nRF54LM20 DK board target. It has no buttons, no
+ * LEDs, no 32 kHz crystal and no UART wiring, so the DK's peripherals on those
+ * pins are disabled.
+ */
+
+#include "memory_map_daisy.dtsi"
+
+/ {
+	chosen {
+		zephyr,boot-mode = &boot_mode0;
+		/delete-property/ zephyr,console;
+	};
+
+	/delete-node/ buttons;
+	/delete-node/ leds;
+	/delete-node/ pwmleds;
+
+	aliases {
+		/delete-property/ sw0;
+		/delete-property/ sw1;
+		/delete-property/ sw2;
+		/delete-property/ sw3;
+		/delete-property/ led0;
+		/delete-property/ led1;
+		/delete-property/ led2;
+		/delete-property/ led3;
+		/delete-property/ pwm-led0;
+		/delete-property/ mcuboot-button0;
+		/delete-property/ mcuboot-led0;
+	};
+
+	hid_dev_0: hid_dev_0 {
+		compatible = "zephyr,hid-device";
+		label = "HID0";
+		protocol-code = "keyboard";
+		in-polling-period-us = <125>;
+		in-report-size = <64>;
+	};
+};
+
+&uart20 {
+	status = "disabled";
+};
+
+&vregmain {
+	status = "okay";
+	regulator-initial-mode = <NRF5X_REG_MODE_LDO>;
+};
+
+/* Lets the application reboot into MCUboot serial recovery. */
+&gpregret1 {
+	status = "okay";
+
+	boot_mode0: boot_mode@0 {
+		compatible = "zephyr,retention";
+		status = "okay";
+		reg = <0x0 0x1>;
+	};
+};

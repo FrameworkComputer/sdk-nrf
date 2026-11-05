@@ -1,0 +1,46 @@
+/*
+ * Copyright (c) 2026 Framework Computer Inc
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+#include "../../memory_map_daisy.dtsi"
+
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+		zephyr,boot-mode = &boot_mode0;
+		zephyr,uart-mcumgr = &cdc_acm_uart0;
+	};
+};
+
+/* Same peripheral instance as uart00; also DK flash pins on P2. */
+&spi00 {
+	status = "disabled";
+};
+
+&uart20 {
+	status = "disabled";
+};
+
+&vregmain {
+	status = "okay";
+	regulator-initial-mode = <NRF5X_REG_MODE_LDO>;
+};
+
+&gpregret1 {
+	status = "okay";
+
+	boot_mode0: boot_mode@0 {
+		compatible = "zephyr,retention";
+		status = "okay";
+		reg = <0x0 0x1>;
+	};
+};
+
+&zephyr_udc0 {
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "Daisy MCUboot";
+	};
+};

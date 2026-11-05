@@ -1,0 +1,40 @@
+/*
+ * Copyright (c) 2026 Framework Computer Inc
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/* Daisy dongle memory map. It must match the layout of the dongles in the
+ * field (hid-remapper-private, nrf54lm20dk_nrf54lm20a_cpuapp_partitions.dtsi):
+ * their MCUboot boots a single image from slot0 at 0x18000, and the settings
+ * storage holds the keyboard bonds.
+ */
+&cpuapp_rram {
+	reg = <0x0 DT_SIZE_K(1940)>;
+
+	/delete-node/ partitions;
+
+	partitions {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		boot_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "mcuboot";
+			reg = <0x0 DT_SIZE_K(96)>;
+		};
+
+		slot0_partition: partition@18000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-0";
+			reg = <0x18000 DT_SIZE_K(1828)>;
+		};
+
+		storage_partition: partition@1e1000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x1e1000 DT_SIZE_K(16)>;
+		};
+	};
+};
